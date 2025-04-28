@@ -1,28 +1,54 @@
+const express = require("express");
 const { MongoClient } = require("mongodb");
+const http = require("http");
+const socketIo = require("socket.io");
 
-// URL de conexión
-const uri = "mongodb://localhost:27017"; // Cambia si usas Atlas
+const app = express();
+const server = http.createServer(app);
+const io = socketIo(server);
+
+const uri = "mongodb://localhost:27017";
 const client = new MongoClient(uri);
 
-async function monitor() {
-  try {
-    await client.connect();
-    const db = client.db("BigDataDemo");
-    const collection = db.collection("temperatura_actual");
+let temperaturas = [];
 
-    // Activar Change Stream
-    const changeStream = collection.watch();
+async function start() {
+  await client.connect();
+  const db = client.db("BigDataDemo");
+  const collection = db.collection("temperatura_actual");
 
-    console.log("🛰️  Monitoreando cambios en la colección 'temperatura_actual'...");
+  const changeStream = collection.watch();
 
-    changeStream.on("change", (next) => {
-      console.log("🔔 Cambio detectado:");
-      console.log(JSON.stringify(next.fullDocument, null, 2));
-    });
+  changeStream.on("change", (next) => {
+    if (next.fullDocument) {
+      const nuevaTemp = {
+        estacion_id: next.fullDocument.estacion_id,
+        fecha: next.fullDocument.fecha,
+        temperatura: next.fullDocument.temperatura
+      };
 
-  } catch (error) {
-    console.error(error);
-  }
+      temperaturas.push(nuevaTemp.temperatura);
+
+      const promedio = (temperaturas.reduce((a, b) => a + b, 0) / temperaturas.length).toFixed(2);
+      const maximo = Math.max(...temperaturas);
+      const minimo = Math.min(...temperaturas);
+
+      io.emit("nueva-temperatura", {
+        ...nuevaTemp,
+        promedio,
+        maximo,
+        minimo
+      });
+    }
+  });
+
+  console.log("🛰️ Monitoreando temperaturas...");
 }
 
-monitor();
+start();
+
+app.use(express.static("public"));
+
+server.listen(3000, () => {
+  console.log("🌐 Servidor corriendo en http://localhost:3000");
+});
